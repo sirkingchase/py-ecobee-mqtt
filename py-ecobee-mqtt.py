@@ -20,10 +20,10 @@ from pyecobee import * #https://github.com/sfanous/Pyecobee
 
 import shelve
 from datetime import datetime
-
+import pandas as pd
 import pytz
 from six.moves import input
-
+from datetime import datetime, timezone
 import json
 
 import logging
@@ -192,7 +192,10 @@ def ecobee_mqtt():
 
     assert thermostat_response.status.code == 0, 'Failure while executing request_thermostats:\n{0}'.format(
         thermostat_response.pretty_format())
-    
+    utc_time = datetime.now(timezone.utc)
+    ts = pd.Timestamp(utc_time)
+    epoch5min = int(ts.round(freq='5min').timestamp())
+
     #testing extracting data from json obj
     # docs here: https://pydoc.net/pyecobee/1.2.0/
     for item in thermostat_response.thermostat_list:
@@ -208,7 +211,10 @@ def ecobee_mqtt():
                 logger.debug(pubtopic)
 
                 parsedValue = cap.value
-                if (cap.type == 'temperature'):
+
+                if (cap.value == 'unknown'):
+                    parsedValue = int(-1)
+                elif (cap.type == 'temperature'):
                     parsedValue = int(cap.value) / 10
                 elif (cap.type == "humidity"): 
                     parsedValue = int(cap.value)
@@ -222,14 +228,16 @@ def ecobee_mqtt():
                     'room': roomname,
                     'code': sensor.code,
                     'type': cap.type,
-                    'value': parsedValue
+                    'value': parsedValue,
+                    'timestamp': epoch5min
                 }
+
                 logger.debug(msg)
                 client.publish(pubtopic, json.dumps(msg), 0, False)
 
         #log equipment status
         eStatusList = item.equipment_status.split(',')
-        #logger.debug('Equipment status: ' + json.dumps(eStatusList))
+        logger.debug('Equipment status: ' + json.dumps(eStatusList))
         msg = {
             'name': item.name,
             'fan': int('fan' in eStatusList),
@@ -246,7 +254,8 @@ def ecobee_mqtt():
             'heatPump2': int('heatPump2' in eStatusList),
             'heatPump3': int('heatPump3' in eStatusList),
             'humidifier': int('humidifier' in eStatusList),
-            'ventilator': int('ventilator' in eStatusList)
+            'ventilator': int('ventilator' in eStatusList),
+            'timestamp': epoch5min
         }
         statusMsg = json.dumps(msg)
         logger.debug(statusMsg)
@@ -255,7 +264,7 @@ def ecobee_mqtt():
 
 
         #log runtime information
-        #logger.debug(item.runtime)
+        logger.debug(item.runtime)
 
         mode = item.settings.hvac_mode
         logger.debug('mode: ' + mode)
@@ -291,7 +300,8 @@ def ecobee_mqtt():
             'desiredFanMode': item.runtime.desired_fan_mode,
             'setpointlow' : setpointlow,
             'setpointhigh': setpointhigh,
-            'actualTemp' : item.runtime.actual_temperature /10
+            'actualTemp' : item.runtime.actual_temperature /10,
+            'timestamp': epoch5min
         }
         rtMsg = json.dumps(msg)
         logger.debug(rtMsg)
